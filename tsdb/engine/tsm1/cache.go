@@ -48,7 +48,14 @@ type entry struct {
 // newEntryValues returns a new instance of entry with the given values.  If the
 // values are not valid, an error is returned.
 func newEntryValues(values []Value) (*entry, error) {
-	e := &entry{values: values}
+	// Ensure we start off with a reasonably sized values slice.
+	e := &entry{}
+	if len(values) < 32 {
+		e.values = make(Values, 0, 32)
+		e.values = append(e.values, values...)
+	} else {
+		e.values = values
+	}
 
 	// No values, don't check types and ordering
 	if len(values) == 0 {
@@ -94,13 +101,21 @@ func (e *entry) add(values []Value) error {
 	}
 
 	// entry currently has no values, so add the new ones and we're done.
+	// TODO(edd): I think this branch is unreachable. Need to verify.
 	if len(e.values) == 0 {
 		e.mu.Lock()
 		// Do the values need sorting?
 		if needSort {
 			e.needSort = needSort
 		}
-		e.values = values
+
+		// Ensure we start off with a reasonably sized values slice.
+		if len(values) < 32 {
+			e.values = make(Values, 0, 32)
+			e.values = append(e.values, values...)
+		} else {
+			e.values = values
+		}
 		e.mu.Unlock()
 		return nil
 	}
@@ -128,6 +143,7 @@ func (e *entry) add(values []Value) error {
 	if needSort {
 		e.needSort = true
 	}
+
 	e.values = append(e.values, values...)
 	e.mu.Unlock()
 	return nil
