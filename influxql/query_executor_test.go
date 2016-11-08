@@ -111,6 +111,34 @@ func TestQueryExecutor_Interrupt(t *testing.T) {
 	}
 }
 
+func TestQueryExecutor_Abort(t *testing.T) {
+	q, err := influxql.ParseQuery(`SELECT count(value) FROM cpu`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewQueryExecutor()
+	e.StatementExecutor = &StatementExecutor{
+		ExecuteStatementFn: func(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
+			select {
+			case <-ctx.InterruptCh:
+				return influxql.ErrQueryInterrupted
+			case <-time.After(100 * time.Millisecond):
+				t.Error("killing the query did not close the channel after 100 milliseconds")
+				return errUnexpected
+			}
+		},
+	}
+
+	closing := make(chan struct{})
+	results := e.ExecuteQuery(q, influxql.ExecutionOptions{}, closing)
+	close(closing)
+	result := <-results
+	if result.Err != influxql.ErrQueryInterrupted {
+		t.Errorf("unexpected error: %s", result.Err)
+	}
+}
+
 func TestQueryExecutor_ShowQueries(t *testing.T) {
 	q, err := influxql.ParseQuery(`SELECT count(value) FROM cpu`)
 	if err != nil {
@@ -225,7 +253,6 @@ func TestQueryExecutor_Close(t *testing.T) {
 		ExecuteStatementFn: func(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
 			close(ch1)
 			<-ctx.InterruptCh
-			close(ch2)
 			return influxql.ErrQueryInterrupted
 		},
 	}
@@ -236,6 +263,7 @@ func TestQueryExecutor_Close(t *testing.T) {
 		if result.Err != influxql.ErrQueryEngineShutdown {
 			t.Errorf("unexpected error: %s", result.Err)
 		}
+		close(ch2)
 	}(results)
 
 	// Wait for the statement to start executing.
@@ -248,7 +276,7 @@ func TestQueryExecutor_Close(t *testing.T) {
 	select {
 	case <-ch2:
 	case <-time.After(100 * time.Millisecond):
-		t.Error("closing the query manager did not kill the query after 100 milliseconds")
+		t.Fatal("closing the query manager did not kill the query after 100 milliseconds")
 	}
 
 	results = e.ExecuteQuery(q, influxql.ExecutionOptions{}, nil)
